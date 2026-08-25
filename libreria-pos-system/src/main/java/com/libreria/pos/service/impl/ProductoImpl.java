@@ -164,26 +164,47 @@ public class ProductoImpl implements IProducto {
         producto.setPrecio(precio);
         producto.setCategoria(categoria);
 
-        // Limpiamos las variaciones viejas y ponemos las nuevas
-        producto.getVariaciones().clear();
-
         try {
-            // 👇 CONVERTIR EL JSON A VARIACIONES REALES 👇
+            // 👇 CONVERTIR EL JSON DE VARIACIONES ENVIADO DESDE EL FRONTEND 👇
             if (variacionesStr != null && !variacionesStr.isEmpty()) {
                 List<Map<String, Object>> variacionesList = objectMapper.readValue(variacionesStr, new TypeReference<List<Map<String, Object>>>() {});
+
+                // Creamos una lista temporal para llevar el control de las que se quedan
+                List<ProductoVariacionEntity> variacionesActualizadas = new ArrayList<>();
+
                 for (Map<String, Object> vMap : variacionesList) {
-                    ProductoVariacionEntity v = new ProductoVariacionEntity();
-                    v.setColor(vMap.get("color").toString());
+                    Long idVar = vMap.get("idVariacion") != null ? Long.parseLong(vMap.get("idVariacion").toString()) : null;
+                    String color = vMap.get("color").toString();
+                    String talla = vMap.get("talla") != null ? vMap.get("talla").toString() : "Única";
+                    Long stock = Long.parseLong(vMap.get("stock").toString());
 
-                    // 👇 CAPTURAMOS LA TALLA (Si no viene, por defecto es "Única") 👇
-                    v.setTalla(vMap.get("talla") != null ? vMap.get("talla").toString() : "Única");
+                    ProductoVariacionEntity v;
 
-                    v.setStock(Long.parseLong(vMap.get("stock").toString()));
-                    producto.agregarVariacion(v);
+                    if (idVar != null) {
+                        // 🟢 Si trae ID, buscamos si ya existe en las variaciones actuales del producto para actualizarla
+                        v = producto.getVariaciones().stream()
+                                .filter(existing -> existing.getIdVariacion().equals(idVar))
+                                .findFirst()
+                                .orElse(new ProductoVariacionEntity());
+                    } else {
+                        // 🔵 Si no trae ID, es una variante totalmente nueva añadida por el admin
+                        v = new ProductoVariacionEntity();
+                        v.setProducto(producto);
+                    }
+
+                    v.setColor(color);
+                    v.setTalla(talla);
+                    v.setStock(stock);
+
+                    variacionesActualizadas.add(v);
                 }
+
+                // Sincronizamos la colección de forma segura sin hacer .clear() masivo que rompa las foreign keys
+                producto.getVariaciones().clear();
+                producto.getVariaciones().addAll(variacionesActualizadas);
             }
 
-            // Si mandaron fotos nuevas, borramos las viejas y subimos las nuevas
+            // Si mandaron fotos nuevas, actualizamos las URLs
             if (imagenes != null && imagenes.length > 0 && !imagenes[0].isEmpty()) {
                 List<String> urlsSubidas = new ArrayList<>();
                 for (MultipartFile imagen : imagenes) {
