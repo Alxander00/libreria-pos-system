@@ -14,5 +14,6 @@ public class PedidoDetallePageResponse {
     private Double costoEnvio;
     private String metodoEntrega;
     private String direccion;
+    private String codigoQr;
     private List<PedidoDetalleResponse> items;
 }

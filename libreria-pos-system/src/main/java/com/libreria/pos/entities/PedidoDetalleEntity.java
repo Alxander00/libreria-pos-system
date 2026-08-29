@@ -27,7 +27,6 @@ public class PedidoDetalleEntity {
     @JoinColumn(name = "id_producto", nullable = false)
     private ProductoEntity producto;
 
-    // 👇 EL NUEVO CAMPO PARA GUARDAR EL COLOR 👇
     @ManyToOne
     @JoinColumn(name = "id_variacion")
     private ProductoVariacionEntity variacion;

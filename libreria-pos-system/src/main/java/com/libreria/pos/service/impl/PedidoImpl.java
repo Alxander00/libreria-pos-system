@@ -45,6 +45,18 @@ public class PedidoImpl implements IPedido {
     @Autowired
     private EmailService emailService;
 
+    @Autowired
+    private com.libreria.pos.service.DteBuilderService dteBuilderService;
+
+    @Autowired
+    private com.libreria.pos.service.HaciendaService haciendaService;
+
+    @Autowired
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
+    @Autowired
+    private com.libreria.pos.service.QrService qrService;
+
     @Override
     @Transactional
     public PedidoEntity crearPedido(PedidoRequest request) {
@@ -130,6 +142,7 @@ public class PedidoImpl implements IPedido {
 
 
     @Override
+    @Transactional
     public PedidoResponse pagarPedido(Long id) {
         String email = SecurityContextHolder.getContext()
                 .getAuthentication()
@@ -154,8 +167,37 @@ public class PedidoImpl implements IPedido {
             throw new RuntimeException("El pedido no está pendiente");
         }
 
+        // 1. Cambiamos el estado a PAGADO
         pedido.setEstado(EstadoPedido.PAGADO);
+        pedido = pedidoRepository.save(pedido);
+
+        // 2. Disparamos la Facturación Electrónica al Simulador de Hacienda
+        procesarFacturacionElectronica(pedido);
+
+        // 3. Volvemos a guardar para asegurar que el Sello de Recepción se guarde en MySQL
         pedidoRepository.save(pedido);
+
+        // =========================================================================
+        // 4. ENVIAR CORREO AUTOMÁTICO AL CLIENTE CON EL COMPROBANTE Y CÓDIGO QR
+        // =========================================================================
+        try {
+            String correoCliente = pedido.getUsuario().getEmail();
+            String asunto = "¡Pago Confirmado y Factura Electrónica Lista! - Pedido #" + pedido.getIdPedidos();
+
+            // Ajusta la URL de tu frontend según corresponda (ej: tu servidor local o dominio de producción)
+            String linkTicket = "http://127.0.0.1:5500/ticket.html?id=" + pedido.getIdPedidos();
+
+            String mensaje = "Hola " + pedido.getUsuario().getNombre() + ",\n\n"
+                    + "¡Tu pago ha sido confirmado con éxito!\n"
+                    + "Ya hemos emitido tu Factura Electrónica ante el Ministerio de Hacienda.\n\n"
+                    + "Puedes ver, descargar o imprimir tu comprobante con su código QR fiscal ingresando al siguiente enlace:\n"
+                    + linkTicket + "\n\n"
+                    + "¡Gracias por comprar en nuestra librería!";
+
+            emailService.enviarNotificacion(correoCliente, asunto, mensaje);
+        } catch (Exception e) {
+            System.err.println("Error al enviar la factura por correo al cliente: " + e.getMessage());
+        }
 
         return mapToResponse(pedido);
     }
@@ -304,6 +346,15 @@ public class PedidoImpl implements IPedido {
         dto.setMetodoEntrega(pedido.getMetodoEntrega());
         dto.setDireccion(pedido.getDireccion());
 
+        // =========================================================================
+        // 🧾 GENERACIÓN DEL CÓDIGO QR FISCAL (MINISTERIO DE HACIENDA) 🧾
+        // =========================================================================
+        if (pedido.getCodigoGeneracion() != null) {
+            // "00" indica ambiente de pruebas. Cuando pases a producción, solo cambia a "01"
+            String qrB64 = qrService.generarQrBase64ParaPedido(pedido, "00");
+            dto.setCodigoQr(qrB64);
+        }
+
         List<PedidoDetalleResponse> detalles = pedido.getItems().stream().map(item -> {
             PedidoDetalleResponse d = new PedidoDetalleResponse();
 
@@ -437,8 +488,45 @@ public class PedidoImpl implements IPedido {
         }
 
         pedido.setTotal(total);
+
+        // 1. Guardamos primero para que MySQL le asigne el IDPedidos oficial
+        pedido = pedidoRepository.save(pedido);
+
+        // 2. Ejecutamos el simulador de Hacienda (Esto imprimirá el JSON en tu consola)
+        procesarFacturacionElectronica(pedido);
+
+        // 3. Volvemos a guardar para que el código de generación, número de control y sello se queden en la BD
         pedidoRepository.save(pedido);
 
+        // =========================================================================
+
         return mapToResponse(pedido);
+    }
+
+    private void procesarFacturacionElectronica(PedidoEntity pedido) {
+        try {
+            // 1. Construir la factura con el molde
+            com.libreria.pos.dto.dte.FacturaElectronicaDTO facturaDte = dteBuilderService.construirFactura(pedido);
+
+            // 2. Enviar al simulador de Hacienda
+            String respuestaHaciendaJson = haciendaService.firmarFactura(facturaDte);
+
+            // 3. Extraer el Sello de Recepción
+            com.fasterxml.jackson.databind.JsonNode jsonNode = objectMapper.readTree(respuestaHaciendaJson);
+            String estado = jsonNode.get("estado").asText();
+
+            if ("PROCESADO".equals(estado)) {
+                String sello = jsonNode.get("selloRecibido").asText();
+
+                // Asignamos los datos fiscales a la entidad
+                pedido.setCodigoGeneracion(facturaDte.getIdentificacion().getCodigoGeneracion());
+                pedido.setNumeroControl(facturaDte.getIdentificacion().getNumeroControl());
+                pedido.setSelloRecibido(sello);
+            } else {
+                System.err.println("Hacienda rechazó la factura: " + respuestaHaciendaJson);
+            }
+        } catch (Exception e) {
+            System.err.println("Error en facturación electrónica: " + e.getMessage());
+        }
     }
 }

@@ -54,4 +54,14 @@ public class PedidoEntity {
 
     @Column(name = "oculto_admin")
     private Boolean ocultoAdmin = false;
+
+    // --- DATOS FISCALES DEL MINISTERIO DE HACIENDA ---
+    @Column(name = "codigo_generacion", unique = true)
+    private String codigoGeneracion; // El UUID de la factura
+
+    @Column(name = "numero_control", unique = true)
+    private String numeroControl; // Tu correlativo interno (DTE-01-...)
+
+    @Column(name = "sello_recibido")
+    private String selloRecibido; // La firma de aprobación del gobierno
 }
