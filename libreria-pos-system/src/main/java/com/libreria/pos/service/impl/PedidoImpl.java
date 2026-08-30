@@ -6,10 +6,7 @@ import com.libreria.pos.repository.*;
 import com.libreria.pos.dto.*;
 import com.libreria.pos.entities.*;
 import com.libreria.pos.repository.*;
-import com.libreria.pos.service.AuthService;
-import com.libreria.pos.service.EmailService;
-import com.libreria.pos.service.IPedido;
-import com.libreria.pos.service.ICarrito;
+import com.libreria.pos.service.*;
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -56,6 +53,9 @@ public class PedidoImpl implements IPedido {
 
     @Autowired
     private com.libreria.pos.service.QrService qrService;
+
+    @Autowired
+    private PdfService pdfService;
 
     @Override
     @Transactional
@@ -177,27 +177,8 @@ public class PedidoImpl implements IPedido {
         // 3. Volvemos a guardar para asegurar que el Sello de Recepción se guarde en MySQL
         pedidoRepository.save(pedido);
 
-        // =========================================================================
-        // 4. ENVIAR CORREO AUTOMÁTICO AL CLIENTE CON EL COMPROBANTE Y CÓDIGO QR
-        // =========================================================================
-        try {
-            String correoCliente = pedido.getUsuario().getEmail();
-            String asunto = "¡Pago Confirmado y Factura Electrónica Lista! - Pedido #" + pedido.getIdPedidos();
-
-            // Ajusta la URL de tu frontend según corresponda (ej: tu servidor local o dominio de producción)
-            String linkTicket = "http://127.0.0.1:5500/ticket.html?id=" + pedido.getIdPedidos();
-
-            String mensaje = "Hola " + pedido.getUsuario().getNombre() + ",\n\n"
-                    + "¡Tu pago ha sido confirmado con éxito!\n"
-                    + "Ya hemos emitido tu Factura Electrónica ante el Ministerio de Hacienda.\n\n"
-                    + "Puedes ver, descargar o imprimir tu comprobante con su código QR fiscal ingresando al siguiente enlace:\n"
-                    + linkTicket + "\n\n"
-                    + "¡Gracias por comprar en nuestra librería!";
-
-            emailService.enviarNotificacion(correoCliente, asunto, mensaje);
-        } catch (Exception e) {
-            System.err.println("Error al enviar la factura por correo al cliente: " + e.getMessage());
-        }
+        // 4. Enviar correo usando nuestra función blindada auxiliar (que está al final del archivo)
+        enviarCorreoFacturaCliente(pedido);
 
         return mapToResponse(pedido);
     }
@@ -498,7 +479,8 @@ public class PedidoImpl implements IPedido {
         // 3. Volvemos a guardar para que el código de generación, número de control y sello se queden en la BD
         pedidoRepository.save(pedido);
 
-        // =========================================================================
+        // 👇 4. ENVIAR CORREO CON LA FUNCIÓN BLINDADA 👇
+        enviarCorreoFacturaCliente(pedido);
 
         return mapToResponse(pedido);
     }
@@ -527,6 +509,90 @@ public class PedidoImpl implements IPedido {
             }
         } catch (Exception e) {
             System.err.println("Error en facturación electrónica: " + e.getMessage());
+        }
+    }
+
+    // =========================================================================
+    // MÉTODO AUXILIAR BLINDADO PARA ENVIAR CORREOS DE FACTURACIÓN
+    // =========================================================================
+    private void enviarCorreoFacturaCliente(PedidoEntity pedido) {
+        try {
+            if (pedido.getUsuario() == null || pedido.getUsuario().getEmail() == null) {
+                System.err.println("El cliente no tiene correo registrado. Omitiendo envío.");
+                return;
+            }
+
+            String correoCliente = pedido.getUsuario().getEmail();
+            String linkTicket = "http://127.0.0.1:5500/ticket.html?id=" + pedido.getIdPedidos();
+            boolean esRetiro = "RETIRO".equalsIgnoreCase(pedido.getMetodoEntrega());
+
+            String asunto = esRetiro
+                    ? "Notificación de Entrega y Facturación Electrónica | MI LIBRERÍA"
+                    : "Confirmación de Pago y Facturación Electrónica | MI LIBRERÍA";
+
+            String descripcionTexto = esRetiro
+                    ? "Le confirmamos que su pedido ha sido entregado exitosamente en nuestra sucursal. Conforme a la normativa del Ministerio de Hacienda, hemos emitido su <b>Factura Electrónica (DTE)</b> correspondiente."
+                    : "Le informamos que su pago ha sido procesado con éxito y su pedido se encuentra en fase de despacho. Conforme a la normativa del Ministerio de Hacienda, hemos emitido su <b>Factura Electrónica (DTE)</b>.";
+
+            java.time.format.DateTimeFormatter formatter = java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
+            String fechaActual = java.time.LocalDateTime.now().format(formatter);
+
+            String nombreCliente = pedido.getUsuario().getNombre() != null ? pedido.getUsuario().getNombre().toUpperCase() : "CLIENTE";
+
+            String mensajeHtml = "<div style=\"font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 0; border: 1px solid #e0e0e0; border-radius: 8px; background-color: #ffffff; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05);\">"
+                    + "<div style=\"background-color: #000000; color: #ffffff; padding: 35px 20px; text-align: center;\">"
+                    + "<h1 style=\"margin: 0; font-size: 24px; letter-spacing: 2px; font-weight: 600;\">MI LIBRERÍA</h1>"
+                    + "<p style=\"margin: 8px 0 0; font-size: 11px; color: #b3b3b3; text-transform: uppercase; letter-spacing: 3px;\">Comprobante Fiscal Electrónico</p>"
+                    + "</div>"
+                    + "<div style=\"padding: 40px 30px;\">"
+                    + "<p style=\"font-size: 16px; color: #2c3e50; margin-top: 0; font-weight: 500;\">Estimado(a) <b>" + nombreCliente + "</b>,</p>"
+                    + "<p style=\"font-size: 14px; color: #555555; line-height: 1.6; margin-bottom: 30px;\">" + descripcionTexto + "</p>"
+                    + "<div style=\"background-color: #f8f9fa; border: 1px solid #eaedf1; border-left: 4px solid #198754; padding: 20px; border-radius: 6px; margin: 25px 0;\">"
+                    + "<table style=\"width: 100%; font-size: 14px; color: #444; border-collapse: collapse;\">"
+                    + "<tr><td style=\"padding-bottom: 10px; color: #7f8c8d;\"><strong>Fecha de Emisión:</strong></td><td style=\"text-align: right; padding-bottom: 10px;\">" + fechaActual + "</td></tr>"
+                    + "<tr><td style=\"padding-bottom: 10px; color: #7f8c8d;\"><strong>Modalidad de Entrega:</strong></td><td style=\"text-align: right; padding-bottom: 10px;\">" + (esRetiro ? "Retiro en Sucursal" : "Envío a Domicilio") + "</td></tr>"
+                    + "<tr><td style=\"padding-top: 12px; border-top: 1px solid #e0e6ed; color: #2c3e50;\"><strong>TOTAL ABONADO:</strong></td><td style=\"text-align: right; padding-top: 12px; border-top: 1px solid #e0e6ed; color: #198754; font-size: 18px; font-weight: 700;\">$" + String.format("%.2f", pedido.getTotal()) + "</td></tr>"
+                    + "</table>"
+                    + "</div>"
+                    + "<div style=\"text-align: center; margin: 40px 0 30px;\">"
+                    + "<a href=\"" + linkTicket + "\" style=\"background-color: #0d6efd; color: #ffffff; padding: 14px 30px; text-decoration: none; border-radius: 4px; font-weight: 600; font-size: 14px; display: inline-block;\">📄 Ver Representación Gráfica (DTE)</a>"
+                    + "</div>"
+                    + "<p style=\"font-size: 12px; color: #95a5a6; text-align: center; margin-top: 30px; line-height: 1.5;\">Si presenta inconvenientes con el botón, acceda al documento mediante el siguiente enlace:<br><a href=\"" + linkTicket + "\" style=\"color: #3498db; word-break: break-all; text-decoration: none;\">" + linkTicket + "</a></p>"
+                    + "</div>"
+                    + "<div style=\"background-color: #f4f6f7; padding: 25px; text-align: center; font-size: 11px; color: #7f8c8d; border-top: 1px solid #eaedf1;\">"
+                    + "<p style=\"margin: 0 0 8px;\">Documento Tributario Electrónico emitido conforme a las regulaciones del Ministerio de Hacienda de El Salvador.</p>"
+                    + "<p style=\"margin: 0 0 8px;\">Este es un mensaje generado automáticamente. Por favor, no responda a este correo.</p>"
+                    + "<p style=\"margin: 0; font-weight: 600;\">MI LIBRERÍA © " + java.time.Year.now().getValue() + " | Atiquizaya, Ahuachapán.</p>"
+                    + "</div>"
+                    + "</div>";
+
+            // Bloque 1: Intentar generar PDF sin que rompa el código
+            byte[] pdfBytes = null;
+            try {
+                pdfBytes = pdfService.generarFacturaPdf(pedido);
+            } catch (Exception e) {
+                System.err.println("Advertencia: Falló la generación del PDF - " + e.getMessage());
+            }
+
+            // Bloque 2: Intentar extraer JSON sin que rompa el código
+            String jsonContent = null;
+            try {
+                com.libreria.pos.dto.dte.FacturaElectronicaDTO facturaDte = dteBuilderService.construirFactura(pedido);
+                jsonContent = objectMapper.writeValueAsString(facturaDte);
+            } catch (Exception e) {
+                System.err.println("Advertencia: Falló la extracción del JSON - " + e.getMessage());
+            }
+
+            // Bloque 3: Enviar (Con adjuntos si hay éxito, o solo HTML si hubo un fallo parcial)
+            if (pdfBytes != null && pdfBytes.length > 0 && jsonContent != null) {
+                emailService.enviarFacturaConAdjuntos(correoCliente, asunto, mensajeHtml, pdfBytes, jsonContent, String.valueOf(pedido.getIdPedidos()));
+            } else {
+                emailService.enviarNotificacionHtml(correoCliente, asunto, mensajeHtml);
+                System.err.println("Correo enviado sin adjuntos por un error en PDF o JSON.");
+            }
+
+        } catch (Exception e) {
+            System.err.println("Error crítico al enviar el correo: " + e.getMessage());
         }
     }
 }
