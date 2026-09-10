@@ -3,6 +3,8 @@ package com.libreria.pos.security;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -22,8 +24,8 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-        // 1. Configuración base (CORS y CSRF)
-        http.cors(cors -> cors.configure(http))
+        // ✅ CORS usando el bean CorsConfigurationSource
+        http.cors(Customizer.withDefaults())
                 .csrf(csrf -> csrf.disable());
 
         http.sessionManagement(session ->
@@ -31,19 +33,22 @@ public class SecurityConfig {
         );
 
         http.authorizeHttpRequests(auth -> auth
-                        // RUTAS PÚBLICAS (Sin login)
-                        .requestMatchers(
-                                "/usuario/register", "/usuario/login", "/usuario/recuperar-password", "/error",
-                                "/producto/imagen/**", "/uploads/**", "/imagenes/**",
-                                "/producto/**", "/categoria/**",
-                                "/api/webhooks/**",           // ← Para webhooks de Wompi
-                                "/api/pagos/wompi/**"         // ← Endpoints de Wompi
-                        ).permitAll()
+                // ✅ Permitir preflight OPTIONS siempre
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
-                // 2. RUTAS EXCLUSIVAS DE ADMIN
-                .requestMatchers("/pedidos/todos", "/admin/**").hasRole("ADMIN") // 1. Primero Admin
-                .requestMatchers("/pedidos/**").hasAnyRole("ADMIN", "CLIENTE") // 2. Luego compartido
-                .requestMatchers("/carrito/**", "/pagos/**").hasRole("CLIENTE") // 3. Al final Cliente
+                // RUTAS PÚBLICAS (Sin login)
+                .requestMatchers(
+                        "/usuario/register", "/usuario/login", "/usuario/recuperar-password", "/error",
+                        "/producto/imagen/**", "/uploads/**", "/imagenes/**",
+                        "/producto/**", "/categoria/**",
+                        "/api/webhooks/**",
+                        "/api/pagos/wompi/**"
+                ).permitAll()
+
+                // RUTAS EXCLUSIVAS DE ADMIN
+                .requestMatchers("/pedidos/todos", "/admin/**").hasRole("ADMIN")
+                .requestMatchers("/pedidos/**").hasAnyRole("ADMIN", "CLIENTE")
+                .requestMatchers("/carrito/**", "/pagos/**").hasRole("CLIENTE")
 
                 .anyRequest().authenticated()
         );
