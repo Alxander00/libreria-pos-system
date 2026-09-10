@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 
 public interface ProductoRepository extends JpaRepository<ProductoEntity, Long> {
@@ -41,4 +42,7 @@ public interface ProductoRepository extends JpaRepository<ProductoEntity, Long> 
     @Modifying
     @Query("UPDATE ProductoEntity p SET p.descuento = :porcentaje WHERE p.categoria.idCategoria = :idCat AND p.activo = true")
     void actualizarDescuentoPorCategoria(@Param("idCat") Long idCat, @Param("porcentaje") Integer porcentaje);
+
+    @Query("SELECT p.categoria.nombre, COUNT(p) FROM ProductoEntity p GROUP BY p.categoria.nombre")
+    List<Object[]> contarProductosPorCategoria();
 }

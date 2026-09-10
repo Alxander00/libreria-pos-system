@@ -6,6 +6,7 @@ import com.libreria.pos.dto.ApartadoResponse;
 import com.libreria.pos.entities.*;
 import com.libreria.pos.repository.ApartadoPagoRepository;
 import com.libreria.pos.repository.ApartadoRepository;
+import com.libreria.pos.repository.PedidoRepository;
 import com.libreria.pos.repository.ProductoRepository;
 import com.libreria.pos.service.AuthService;
 import com.libreria.pos.service.IApartado;
@@ -30,6 +31,9 @@ public class ApartadoImpl implements IApartado {
     private ProductoRepository productoRepository;
 
     @Autowired
+    private PedidoRepository pedidoRepository;
+
+    @Autowired
     private AuthService authService;
 
     @Override
@@ -52,15 +56,19 @@ public class ApartadoImpl implements IApartado {
             }
         }
 
-        // Validar stock
-        if (variacion == null || variacion.getStock() < request.getCantidad()) {
-            throw new RuntimeException("Stock insuficiente para apartar");
+        if (variacion == null) {
+            throw new RuntimeException("El producto no tiene variación configurada");
         }
 
-        // Descontar stock (se aparta físicamente)
+        // Validar stock disponible
+        if (variacion.getStock() < request.getCantidad()) {
+            throw new RuntimeException("Stock insuficiente. Disponible: " + variacion.getStock());
+        }
+
+        // ✅ DESCONTAR STOCK DEFINITIVAMENTE (el cliente se lleva el producto)
         variacion.setStock(variacion.getStock() - request.getCantidad());
 
-        // Precio con descuento si aplica
+        // Precio con descuento
         double precioUnitario = producto.getPrecio();
         if (producto.getDescuento() > 0) {
             precioUnitario = precioUnitario - (precioUnitario * (producto.getDescuento() / 100.0));
@@ -68,6 +76,30 @@ public class ApartadoImpl implements IApartado {
 
         Double total = precioUnitario * request.getCantidad();
 
+        // 1. Crear el pedido asociado (ENTREGADO porque el producto ya se llevó)
+        PedidoEntity pedido = new PedidoEntity();
+        pedido.setUsuario(cliente);
+        pedido.setTotal(total);
+        pedido.setFecha(LocalDateTime.now());
+        pedido.setEstado(EstadoPedido.ENTREGADO); // ✅ El producto ya fue entregado
+        pedido.setMetodoEntrega("RETIRO");
+        pedido.setDireccion("Retiro en Sucursal - Apartado #" + (apartadoRepository.count() + 1));
+        pedido.setCostoEnvio(0.0);
+        pedido.setMetodoPago(request.getMetodoPagoInicial() != null ? request.getMetodoPagoInicial() : "EFECTIVO");
+        pedido.setEsApartado(true); // ✅ Marcamos como apartado para no descontar stock en PedidoImpl
+
+        // Agregar detalle del pedido
+        PedidoDetalleEntity detalle = new PedidoDetalleEntity();
+        detalle.setPedido(pedido);
+        detalle.setProducto(producto);
+        detalle.setVariacion(variacion);
+        detalle.setCantidad(request.getCantidad());
+        detalle.setPrecio(precioUnitario);
+        pedido.getItems().add(detalle);
+
+        pedidoRepository.save(pedido);
+
+        // 2. Crear el apartado
         ApartadoEntity apartado = new ApartadoEntity();
         apartado.setCliente(cliente);
         apartado.setProducto(producto);
@@ -77,10 +109,11 @@ public class ApartadoImpl implements IApartado {
         apartado.setSaldoPendiente(total);
         apartado.setFechaCreacion(LocalDateTime.now());
         apartado.setEstado(EstadoApartado.ACTIVO);
+        apartado.setPedido(pedido); // ✅ Asociar el pedido
 
         apartadoRepository.save(apartado);
 
-        // Registrar el abono inicial
+        // 3. Registrar el abono inicial
         if (request.getMontoInicial() != null && request.getMontoInicial() > 0) {
             if (request.getMontoInicial() > total) {
                 throw new RuntimeException("El abono inicial no puede ser mayor al total");
@@ -104,30 +137,65 @@ public class ApartadoImpl implements IApartado {
     }
 
     @Override
-    public List<ApartadoResponse> obtenerMisApartados() {
-        UsuarioEntity cliente = authService.getUsuarioAutenticado();
-        return apartadoRepository.findByCliente(cliente)
-                .stream()
-                .map(this::mapToResponse)
-                .toList();
-    }
+    @Transactional
+    public ApartadoResponse cancelar(Long idApartado) {
+        ApartadoEntity apartado = apartadoRepository.findById(idApartado)
+                .orElseThrow(() -> new RuntimeException("Apartado no encontrado"));
 
-    @Override
-    public List<ApartadoResponse> obtenerTodosApartados() {
-        // Orden: ACTIVOS primero
-        List<ApartadoEntity> activos = apartadoRepository.findByEstadoOrderByFechaCreacionDesc(EstadoApartado.ACTIVO);
-        List<ApartadoEntity> liquidados = apartadoRepository.findByEstadoOrderByFechaCreacionDesc(EstadoApartado.LIQUIDADO);
-        List<ApartadoEntity> cancelados = apartadoRepository.findByEstadoOrderByFechaCreacionDesc(EstadoApartado.CANCELADO);
+        if (apartado.getEstado() == EstadoApartado.LIQUIDADO) {
+            throw new RuntimeException("No se puede cancelar un apartado liquidado");
+        }
 
-        List<ApartadoEntity> todos = new ArrayList<>();
-        todos.addAll(activos);
-        todos.addAll(liquidados);
-        todos.addAll(cancelados);
-        return todos.stream().map(this::mapToResponse).toList();
+        // ✅ DEVOLVER STOCK (porque el cliente devuelve el producto)
+        ProductoVariacionEntity variacion = apartado.getVariacion();
+        if (variacion != null) {
+            variacion.setStock(variacion.getStock() + apartado.getCantidad());
+        }
+
+        // ✅ Anular el pedido asociado (cambiar estado a CANCELADO)
+        PedidoEntity pedido = apartado.getPedido();
+        if (pedido != null) {
+            pedido.setEstado(EstadoPedido.CANCELADO);
+            pedidoRepository.save(pedido);
+        }
+
+        apartado.setEstado(EstadoApartado.CANCELADO);
+        apartadoRepository.save(apartado);
+        return mapToResponse(apartado);
     }
 
     @Override
     @Transactional
+    public ApartadoResponse liquidar(Long idApartado) {
+        ApartadoEntity apartado = apartadoRepository.findById(idApartado)
+                .orElseThrow(() -> new RuntimeException("Apartado no encontrado"));
+
+        if (apartado.getEstado() != EstadoApartado.ACTIVO) {
+            throw new RuntimeException("El apartado ya no está activo");
+        }
+
+        // ✅ NO TOCAR STOCK (el producto ya fue entregado)
+        // Solo registrar el pago del saldo pendiente
+        Double saldoRestante = apartado.getSaldoPendiente();
+        if (saldoRestante > 0) {
+            ApartadoPagoEntity pago = new ApartadoPagoEntity();
+            pago.setApartado(apartado);
+            pago.setMonto(saldoRestante);
+            pago.setFecha(LocalDateTime.now());
+            pago.setMetodoPago("EFECTIVO");
+            pagoRepository.save(pago);
+
+            apartado.setMontoPagado(apartado.getTotalAcordado());
+            apartado.setSaldoPendiente(0.0);
+        }
+
+        apartado.setEstado(EstadoApartado.LIQUIDADO);
+        apartadoRepository.save(apartado);
+
+        return mapToResponse(apartado);
+    }
+
+    @Override
     public ApartadoResponse abonar(Long idApartado, AbonoRequest request) {
         ApartadoEntity apartado = apartadoRepository.findById(idApartado)
                 .orElseThrow(() -> new RuntimeException("Apartado no encontrado"));
@@ -159,53 +227,25 @@ public class ApartadoImpl implements IApartado {
     }
 
     @Override
-    @Transactional
-    public ApartadoResponse cancelar(Long idApartado) {
-        ApartadoEntity apartado = apartadoRepository.findById(idApartado)
-                .orElseThrow(() -> new RuntimeException("Apartado no encontrado"));
-
-        if (apartado.getEstado() == EstadoApartado.LIQUIDADO) {
-            throw new RuntimeException("No se puede cancelar un apartado liquidado");
-        }
-
-        // Devolver stock
-        ProductoVariacionEntity variacion = apartado.getVariacion();
-        if (variacion != null) {
-            variacion.setStock(variacion.getStock() + apartado.getCantidad());
-        }
-
-        apartado.setEstado(EstadoApartado.CANCELADO);
-        apartadoRepository.save(apartado);
-        return mapToResponse(apartado);
+    public List<ApartadoResponse> obtenerMisApartados() {
+        UsuarioEntity cliente = authService.getUsuarioAutenticado();
+        return apartadoRepository.findByCliente(cliente)
+                .stream()
+                .map(this::mapToResponse)
+                .toList();
     }
 
     @Override
-    @Transactional
-    public ApartadoResponse liquidar(Long idApartado) {
-        ApartadoEntity apartado = apartadoRepository.findById(idApartado)
-                .orElseThrow(() -> new RuntimeException("Apartado no encontrado"));
+    public List<ApartadoResponse> obtenerTodosApartados() {
+        List<ApartadoEntity> activos = apartadoRepository.findByEstadoOrderByFechaCreacionDesc(EstadoApartado.ACTIVO);
+        List<ApartadoEntity> liquidados = apartadoRepository.findByEstadoOrderByFechaCreacionDesc(EstadoApartado.LIQUIDADO);
+        List<ApartadoEntity> cancelados = apartadoRepository.findByEstadoOrderByFechaCreacionDesc(EstadoApartado.CANCELADO);
 
-        if (apartado.getEstado() != EstadoApartado.ACTIVO) {
-            throw new RuntimeException("El apartado ya no está activo");
-        }
-
-        // Forzar liquidación con un pago por el saldo restante
-        Double saldoRestante = apartado.getSaldoPendiente();
-        if (saldoRestante > 0) {
-            ApartadoPagoEntity pago = new ApartadoPagoEntity();
-            pago.setApartado(apartado);
-            pago.setMonto(saldoRestante);
-            pago.setFecha(LocalDateTime.now());
-            pago.setMetodoPago("EFECTIVO");
-            pagoRepository.save(pago);
-
-            apartado.setMontoPagado(apartado.getTotalAcordado());
-            apartado.setSaldoPendiente(0.0);
-        }
-
-        apartado.setEstado(EstadoApartado.LIQUIDADO);
-        apartadoRepository.save(apartado);
-        return mapToResponse(apartado);
+        List<ApartadoEntity> todos = new ArrayList<>();
+        todos.addAll(activos);
+        todos.addAll(liquidados);
+        todos.addAll(cancelados);
+        return todos.stream().map(this::mapToResponse).toList();
     }
 
     // ========== MAPPER ==========

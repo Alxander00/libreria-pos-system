@@ -1,11 +1,13 @@
 package com.libreria.pos.service.impl;
 
 import com.libreria.pos.dto.LoginRequest;
+import com.libreria.pos.dto.TokenResponse;
 import com.libreria.pos.dto.UsuarioRequest;
 import com.libreria.pos.dto.UsuarioResponse;
 import com.libreria.pos.entities.UsuarioEntity;
 import com.libreria.pos.repository.UsuarioRepository;
 import com.libreria.pos.security.JwtUtil;
+import com.libreria.pos.service.AuditoriaService;
 import com.libreria.pos.service.EmailService;
 import com.libreria.pos.service.IUsuario;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,6 +40,9 @@ public class UsuarioImpl implements IUsuario {
     @Autowired
     private EmailService emailService;
 
+    @Autowired
+    private AuditoriaService auditoriaService;
+
     // Carpeta donde se guardarán las fotos dentro de tu carpeta 'uploads'
     private final String uploadDir = "uploads/avatars";
 
@@ -52,8 +57,7 @@ public class UsuarioImpl implements IUsuario {
     }
 
     @Override
-    public String login(LoginRequest loginRequest) {
-        // 👈 Restaurada TU lógica original de login
+    public TokenResponse login(LoginRequest loginRequest) {
         UsuarioEntity usuario = usuarioRepository.findByEmail(loginRequest.getEmail())
                 .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
 
@@ -61,7 +65,13 @@ public class UsuarioImpl implements IUsuario {
             throw new RuntimeException("Credenciales incorrectas");
         }
 
-        return jwtUtil.generarToken(usuario);
+        String token = jwtUtil.generarToken(usuario);
+        String refreshToken = jwtUtil.generarRefreshToken(usuario);
+
+        // Registrar en auditoría
+        auditoriaService.registrar("LOGIN_EXITOSO", "Usuario: " + usuario.getEmail());
+
+        return new TokenResponse(token, refreshToken);
     }
 
     @Override
@@ -178,7 +188,7 @@ public class UsuarioImpl implements IUsuario {
                     + "Inicia sesión con esta contraseña y cámbiala en tu perfil inmediatamente.\n\n"
                     + "Saludos,\nEl equipo de MI TIENDA";
 
-            emailService.enviarNotificacion(email, asunto, cuerpo);
+            emailService.enviarNotificacionHtml(email, asunto, cuerpo.replace("\n", "<br>"));
         }
     }
 }

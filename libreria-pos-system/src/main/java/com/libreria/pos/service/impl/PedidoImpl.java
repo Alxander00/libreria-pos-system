@@ -57,6 +57,9 @@ public class PedidoImpl implements IPedido {
     @Autowired
     private PdfService pdfService;
 
+    @Autowired
+    private WhatsAppService whatsAppService;
+
     @Override
     @Transactional
     public PedidoEntity crearPedido(PedidoRequest request) {
@@ -119,7 +122,7 @@ public class PedidoImpl implements IPedido {
                     + "Total: $" + pedido.getTotal() + "\n"
                     + "Revisa el panel de control para procesarlo.";
 
-            emailService.enviarNotificacion(correoAdmin, asunto, mensaje);
+            emailService.enviarNotificacionHtml(correoAdmin, asunto, mensaje.replace("\n", "<br>"));
         } catch (Exception e) {
             System.out.println("Error al enviar notificación al admin: " + e.getMessage());
         }
@@ -238,7 +241,11 @@ public class PedidoImpl implements IPedido {
                 + "Pronto llegará a la dirección registrada: " + pedido.getDireccion() + "\n\n"
                 + "¡Gracias por confiar en nosotros!";
 
-        emailService.enviarNotificacion(pedido.getUsuario().getEmail(), "¡Tu compra va en camino! 🚚", mensaje);
+        // ENVÍO DE WHATSAPP AUTOMÁTICO
+        whatsAppService.enviarMensaje(pedido.getUsuario().getTelefono(), mensaje);
+
+        // Enviamos también por correo (tu lógica original)
+        emailService.enviarNotificacionHtml(pedido.getUsuario().getEmail(), "¡Tu compra va en camino! 🚚", mensaje.replace("\n", "<br>"));
 
         return mapToResponse(pedido);
     }
@@ -254,7 +261,11 @@ public class PedidoImpl implements IPedido {
                 + "Esperamos que disfrutes mucho tu producto.\n\n"
                 + "¡Vuelve pronto!";
 
-        emailService.enviarNotificacion(pedido.getUsuario().getEmail(), "¡Entrega Confirmada! ✅", mensaje);
+        // ENVÍO DE WHATSAPP AUTOMÁTICO
+        whatsAppService.enviarMensaje(pedido.getUsuario().getTelefono(), mensaje);
+
+        // Enviamos también por correo (tu lógica original)
+        emailService.enviarNotificacionHtml(pedido.getUsuario().getEmail(), "¡Entrega Confirmada! ✅", mensaje.replace("\n", "<br>"));
 
         return mapToResponse(pedido);
     }
@@ -479,7 +490,7 @@ public class PedidoImpl implements IPedido {
         // 3. Volvemos a guardar para que el código de generación, número de control y sello se queden en la BD
         pedidoRepository.save(pedido);
 
-        // 👇 4. ENVIAR CORREO CON LA FUNCIÓN BLINDADA 👇
+        // 4. ENVIAR CORREO CON LA FUNCIÓN BLINDADA 👇
         enviarCorreoFacturaCliente(pedido);
 
         return mapToResponse(pedido);

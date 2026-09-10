@@ -23,8 +23,17 @@ public class ProductoVariacionEntity {
     private Long stock;
     private String talla;
 
+    // NUEVO CAMPO: Stock reservado por apartados
+    @Column(name = "stock_reservado", columnDefinition = "BIGINT DEFAULT 0")
+    private Long stockReservado = 0L;
+
     @ManyToOne
     @JoinColumn(name = "id_producto")
-    @JsonBackReference // Esto es vital para evitar el bucle infinito del que hablamos antes
+    @JsonBackReference
     private ProductoEntity producto;
+
+    // Método para obtener stock disponible (total - reservado)
+    public Long getStockDisponible() {
+        return (stock != null ? stock : 0L) - (stockReservado != null ? stockReservado : 0L);
+    }
 }

@@ -1,7 +1,7 @@
 package com.libreria.pos.controller;
 
 import com.libreria.pos.dto.LoginRequest;
-import com.libreria.pos.dto.LoginResponse;
+import com.libreria.pos.dto.TokenResponse;
 import com.libreria.pos.dto.UsuarioRequest;
 import com.libreria.pos.dto.UsuarioResponse;
 import com.libreria.pos.entities.UsuarioEntity;
@@ -49,9 +49,8 @@ public class UsuarioController {
     }
 
     @PostMapping("/login")
-    public LoginResponse login(@RequestBody LoginRequest usuario) {
-        String token = iUsuario.login(usuario);
-        return new LoginResponse(token);
+    public TokenResponse login(@RequestBody LoginRequest usuario) {
+        return iUsuario.login(usuario);
     }
 
     @GetMapping("/todos")

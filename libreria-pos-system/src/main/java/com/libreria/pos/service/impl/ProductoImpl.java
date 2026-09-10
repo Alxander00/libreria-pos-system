@@ -34,7 +34,6 @@ public class ProductoImpl implements IProducto {
     @Autowired
     private CategoriaRepository categoriaRepository;
 
-    // 👇 Esta herramienta de Spring Boot nos ayuda a leer JSON fácilmente
     @Autowired
     private ObjectMapper objectMapper;
 
@@ -67,7 +66,7 @@ public class ProductoImpl implements IProducto {
         producto.setNombre(request.getNombre());
         producto.setDescripcion(request.getDescripcion());
         producto.setPrecio(request.getPrecio());
-        producto.setStock(request.getStock()); // Usa nuestro "puente mágico"
+        producto.setStock(request.getStock());
         producto.setCategoria(categoria);
         return productoRepository.save(producto);
     }
@@ -82,7 +81,7 @@ public class ProductoImpl implements IProducto {
         producto.setNombre(request.getNombre());
         producto.setDescripcion(request.getDescripcion());
         producto.setPrecio(request.getPrecio());
-        producto.setStock(request.getStock()); // Usa nuestro "puente mágico"
+        producto.setStock(request.getStock());
         producto.setCategoria(categoria);
         return productoRepository.save(producto);
     }
@@ -91,6 +90,20 @@ public class ProductoImpl implements IProducto {
     public void delete(Long id) {
         ProductoEntity producto = productoRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Producto no encontrado"));
+
+        // NUEVO: Borrar imágenes de Cloudinary al eliminar el producto
+        if (producto.getImagenesUrls() != null) {
+            for (String urlAntigua : producto.getImagenesUrls()) {
+                String publicId = extraerPublicId(urlAntigua);
+                if (publicId != null) {
+                    try {
+                        cloudinary.uploader().destroy(publicId, ObjectUtils.emptyMap());
+                    } catch (Exception e) {
+                        System.out.println("Error al borrar imagen en Cloudinary: " + e.getMessage());
+                    }
+                }
+            }
+        }
 
         producto.setActivo(false);
         productoRepository.save(producto);
@@ -113,7 +126,9 @@ public class ProductoImpl implements IProducto {
             if (imagenes != null) {
                 for (MultipartFile imagen : imagenes) {
                     if (!imagen.isEmpty()) {
-                        Map uploadResult = cloudinary.uploader().upload(imagen.getBytes(), ObjectUtils.emptyMap());
+                        //  NUEVO: Configuración de la carpeta
+                        Map<String, Object> opciones = ObjectUtils.asMap("folder", "libreria_pos/productos");
+                        Map uploadResult = cloudinary.uploader().upload(imagen.getBytes(), opciones);
                         urlsSubidas.add(uploadResult.get("url").toString());
                     }
                 }
@@ -126,16 +141,12 @@ public class ProductoImpl implements IProducto {
             producto.setImagenesUrls(urlsSubidas);
             producto.setCategoria(categoria);
 
-            // 👇 CONVERTIR EL JSON A VARIACIONES REALES 👇
             if (variacionesStr != null && !variacionesStr.isEmpty()) {
                 List<Map<String, Object>> variacionesList = objectMapper.readValue(variacionesStr, new TypeReference<List<Map<String, Object>>>() {});
                 for (Map<String, Object> vMap : variacionesList) {
                     ProductoVariacionEntity v = new ProductoVariacionEntity();
                     v.setColor(vMap.get("color").toString());
-
-                    // 👇 CAPTURAMOS LA TALLA (Si no viene, por defecto es "Única") 👇
                     v.setTalla(vMap.get("talla") != null ? vMap.get("talla").toString() : "Única");
-
                     v.setStock(Long.parseLong(vMap.get("stock").toString()));
                     producto.agregarVariacion(v);
                 }
@@ -165,11 +176,8 @@ public class ProductoImpl implements IProducto {
         producto.setCategoria(categoria);
 
         try {
-            // 👇 CONVERTIR EL JSON DE VARIACIONES ENVIADO DESDE EL FRONTEND 👇
             if (variacionesStr != null && !variacionesStr.isEmpty()) {
                 List<Map<String, Object>> variacionesList = objectMapper.readValue(variacionesStr, new TypeReference<List<Map<String, Object>>>() {});
-
-                // Creamos una lista temporal para llevar el control de las que se quedan
                 List<ProductoVariacionEntity> variacionesActualizadas = new ArrayList<>();
 
                 for (Map<String, Object> vMap : variacionesList) {
@@ -181,13 +189,11 @@ public class ProductoImpl implements IProducto {
                     ProductoVariacionEntity v;
 
                     if (idVar != null) {
-                        // 🟢 Si trae ID, buscamos si ya existe en las variaciones actuales del producto para actualizarla
                         v = producto.getVariaciones().stream()
                                 .filter(existing -> existing.getIdVariacion().equals(idVar))
                                 .findFirst()
                                 .orElse(new ProductoVariacionEntity());
                     } else {
-                        // 🔵 Si no trae ID, es una variante totalmente nueva añadida por el admin
                         v = new ProductoVariacionEntity();
                         v.setProducto(producto);
                     }
@@ -199,17 +205,27 @@ public class ProductoImpl implements IProducto {
                     variacionesActualizadas.add(v);
                 }
 
-                // Sincronizamos la colección de forma segura sin hacer .clear() masivo que rompa las foreign keys
                 producto.getVariaciones().clear();
                 producto.getVariaciones().addAll(variacionesActualizadas);
             }
 
-            // Si mandaron fotos nuevas, actualizamos las URLs
+            // NUEVO: Si mandaron fotos nuevas, primero borramos las viejas
             if (imagenes != null && imagenes.length > 0 && !imagenes[0].isEmpty()) {
+                if (producto.getImagenesUrls() != null) {
+                    for (String urlAntigua : producto.getImagenesUrls()) {
+                        String publicId = extraerPublicId(urlAntigua);
+                        if (publicId != null) {
+                            cloudinary.uploader().destroy(publicId, ObjectUtils.emptyMap());
+                        }
+                    }
+                }
+
                 List<String> urlsSubidas = new ArrayList<>();
                 for (MultipartFile imagen : imagenes) {
                     if (!imagen.isEmpty()) {
-                        Map uploadResult = cloudinary.uploader().upload(imagen.getBytes(), ObjectUtils.emptyMap());
+                        // NUEVO: Configuración de la carpeta
+                        Map<String, Object> opciones = ObjectUtils.asMap("folder", "libreria_pos/productos");
+                        Map uploadResult = cloudinary.uploader().upload(imagen.getBytes(), opciones);
                         urlsSubidas.add(uploadResult.get("url").toString());
                     }
                 }
@@ -224,10 +240,9 @@ public class ProductoImpl implements IProducto {
         }
     }
 
-    @org.springframework.transaction.annotation.Transactional // 👈 Protege la base de datos de errores a medias
+    @org.springframework.transaction.annotation.Transactional
     @Override
     public void aplicarDescuentoPro(DescuentoRequest request) {
-        // 1. Validaciones de seguridad
         if (request.getValor() == null || request.getValor() < 0 || request.getValor() > 100) {
             throw new IllegalArgumentException("El porcentaje de descuento debe estar entre 0 y 100%");
         }
@@ -235,7 +250,6 @@ public class ProductoImpl implements IProducto {
             throw new IllegalArgumentException("El tipo de descuento es obligatorio");
         }
 
-        // 2. Ejecución optimizada según el alcance
         switch (request.getTipo().toUpperCase()) {
             case "GLOBAL":
                 productoRepository.actualizarDescuentoGlobal(request.getValor());
@@ -257,5 +271,20 @@ public class ProductoImpl implements IProducto {
             default:
                 throw new IllegalArgumentException("Tipo de descuento no soportado: " + request.getTipo());
         }
+    }
+
+    // NUEVO: Método auxiliar para extraer el ID de la imagen
+    private String extraerPublicId(String urlImagen) {
+        try {
+            int startIndex = urlImagen.indexOf("libreria_pos/productos/");
+            if (startIndex != -1) {
+                String rutaYArchivo = urlImagen.substring(startIndex);
+                int dotIndex = rutaYArchivo.lastIndexOf('.');
+                return (dotIndex != -1) ? rutaYArchivo.substring(0, dotIndex) : rutaYArchivo;
+            }
+        } catch (Exception e) {
+            System.out.println("Error extrayendo public_id de: " + urlImagen);
+        }
+        return null;
     }
 }

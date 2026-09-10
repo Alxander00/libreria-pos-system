@@ -36,13 +36,8 @@ public class CategoriaController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<?> delete(@PathVariable Long id){
-        try {
-            icategoria.delete(id);
-            return ResponseEntity.ok("Categoría eliminada correctamente");
-        } catch (Exception e) {
-            // Si entra aquí, es probable que sea por restricción de llave foránea
-            return ResponseEntity.badRequest().body("Error: No se puede eliminar porque esta categoría tiene productos asociados.");
-        }
+    public ResponseEntity<String> delete(@PathVariable Long id){
+        icategoria.delete(id);
+        return ResponseEntity.ok("Categoría eliminada correctamente");
     }
 }

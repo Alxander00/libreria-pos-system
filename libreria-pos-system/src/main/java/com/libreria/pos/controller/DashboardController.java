@@ -1,10 +1,10 @@
 package com.libreria.pos.controller;
 
-import com.libreria.pos.entities.PedidoEntity;
+import com.libreria.pos.entities.EstadoPedido;
 import com.libreria.pos.entities.ProductoEntity;
+import com.libreria.pos.repository.CategoriaRepository;
 import com.libreria.pos.repository.PedidoRepository;
 import com.libreria.pos.repository.ProductoRepository;
-import com.libreria.pos.repository.UsuarioRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -22,97 +23,66 @@ public class DashboardController {
 
     @Autowired
     private PedidoRepository pedidoRepository;
+
     @Autowired
     private ProductoRepository productoRepository;
+
     @Autowired
-    private UsuarioRepository usuarioRepository;
+    private CategoriaRepository categoriaRepository; // ✅ Inyectado
 
     @GetMapping("/estadisticas")
     public ResponseEntity<?> obtenerEstadisticas() {
         Map<String, Object> stats = new HashMap<>();
 
-        List<PedidoEntity> pedidos = pedidoRepository.findAll();
-        List<ProductoEntity> productos = productoRepository.findAll();
-
         LocalDate hoy = LocalDate.now();
-        // Obtener el inicio de la semana (Lunes)
         LocalDate inicioSemana = hoy.minusDays(hoy.getDayOfWeek().getValue() - 1);
         LocalDate inicioMes = hoy.withDayOfMonth(1);
 
-        double ingHoy = 0, ingSemana = 0, ingMes = 0;
-        int pendientes = 0;
+        // Consultas optimizadas
+        double ingHoy = pedidoRepository.sumarIngresosEntreFechas(hoy.atStartOfDay(), hoy.atTime(23,59,59));
+        double ingSemana = pedidoRepository.sumarIngresosEntreFechas(inicioSemana.atStartOfDay(), LocalDateTime.now());
+        double ingMes = pedidoRepository.sumarIngresosEntreFechas(inicioMes.atStartOfDay(), LocalDateTime.now());
 
-        // Pre-llenar los últimos 7 días en un mapa para la gráfica
-        Map<LocalDate, Double> ventasPorDia = new LinkedHashMap<>();
-        for (int i = 6; i >= 0; i--) {
-            ventasPorDia.put(hoy.minusDays(i), 0.0);
-        }
+        long pendientes = pedidoRepository.countByEstado(EstadoPedido.PENDIENTE);
+        long totalProductos = productoRepository.count();
+        long totalCategorias = categoriaRepository.count();
 
-        for (PedidoEntity p : pedidos) {
-            // Ignoramos los pedidos que tú como admin ocultaste/archivaste
-            if (p.getOcultoAdmin() != null && p.getOcultoAdmin()) {
-                continue;
-            }
-
-            if ("PENDIENTE".equals(p.getEstado().name())) {
-                pendientes++;
-            }
-
-            if ("ENTREGADO".equals(p.getEstado().name()) || "PAGADO".equals(p.getEstado().name())) {
-
-                // 👇 ESTA ES LA CORRECCIÓN 👇
-                // Como tu entidad ya usa LocalDateTime, la extracción es directa
-                LocalDate fechaPedido = p.getFecha().toLocalDate();
-
-                // Sumatoria de tarjetas
-                if (fechaPedido.isEqual(hoy)) ingHoy += p.getTotal();
-                if (!fechaPedido.isBefore(inicioSemana)) ingSemana += p.getTotal();
-                if (!fechaPedido.isBefore(inicioMes)) ingMes += p.getTotal();
-
-                // Sumatoria para la gráfica de 7 días
-                if (ventasPorDia.containsKey(fechaPedido)) {
-                    ventasPorDia.put(fechaPedido, ventasPorDia.get(fechaPedido) + p.getTotal());
-                }
-            }
-        }
-
-        // Formatear datos de ventas para que el Frontend (JS) lo lea fácil
+        // Ventas por día (últimos 7 días)
         List<Map<String, Object>> ventasSemanales = new ArrayList<>();
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("E d", new Locale("es", "ES"));
 
-        ventasPorDia.forEach((fecha, monto) -> {
+        for (int i = 6; i >= 0; i--) {
+            LocalDate fecha = hoy.minusDays(i);
+            LocalDateTime inicioDia = fecha.atStartOfDay();
+            LocalDateTime finDia = fecha.atTime(23, 59, 59);
+            Double monto = pedidoRepository.sumarIngresosEntreFechas(inicioDia, finDia);
+
             Map<String, Object> diaVenta = new HashMap<>();
-            // Capitalizar la primera letra del día (ej. "lun 12" -> "Lun 12")
             String fechaTexto = fecha.format(formatter);
             fechaTexto = fechaTexto.substring(0, 1).toUpperCase() + fechaTexto.substring(1);
-
             diaVenta.put("fecha", fechaTexto);
-            diaVenta.put("monto", monto);
+            diaVenta.put("monto", monto != null ? monto : 0.0);
             ventasSemanales.add(diaVenta);
-        });
+        }
 
-        // Agrupar productos por categoría para la gráfica de Dona
-        Map<String, Long> conteoCategorias = productos.stream()
-                .collect(Collectors.groupingBy(
-                        p -> p.getCategoria() != null ? p.getCategoria().getNombre() : "Sin Categoría",
-                        Collectors.counting()
-                ));
-
+        // Productos por categoría (sin findAll())
+        List<Object[]> conteoCategorias = productoRepository.contarProductosPorCategoria();
         List<Map<String, Object>> categoriasList = new ArrayList<>();
-        conteoCategorias.forEach((nombre, cantidad) -> {
+        for (Object[] row : conteoCategorias) {
+            String nombre = (String) row[0];
+            Long cantidad = (Long) row[1];
             Map<String, Object> catMap = new HashMap<>();
-            catMap.put("nombre", nombre);
+            catMap.put("nombre", nombre != null ? nombre : "Sin Categoría");
             catMap.put("cantidad", cantidad);
             categoriasList.add(catMap);
-        });
+        }
 
-        // Empaquetar todo el JSON de respuesta
         stats.put("ingresosHoy", ingHoy);
         stats.put("ingresosSemana", ingSemana);
         stats.put("ingresosMes", ingMes);
         stats.put("pendientes", pendientes);
-        stats.put("totalProductos", productos.size());
-        stats.put("totalCategorias", conteoCategorias.size());
+        stats.put("totalProductos", totalProductos);
+        stats.put("totalCategorias", totalCategorias);
         stats.put("ventasSemanales", ventasSemanales);
         stats.put("categorias", categoriasList);
 

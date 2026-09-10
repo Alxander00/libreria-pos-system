@@ -1,70 +1,78 @@
 package com.libreria.pos.service;
 
-import jakarta.mail.internet.MimeMessage;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.core.io.ByteArrayResource;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+
+import java.util.*;
 
 @Service
 public class EmailService {
 
-    @Autowired
-    private JavaMailSender mailSender;
+    @Value("${resend.api.key}")
+    private String apiKey;
 
-    // Método para correos estándar (Texto plano) por si lo usas en otra parte
-    public void enviarNotificacion(String to, String subject, String body) {
-        try {
-            org.springframework.mail.SimpleMailMessage message = new org.springframework.mail.SimpleMailMessage();
-            message.setFrom("alextejada025@gmail.com");
-            message.setTo(to);
-            message.setSubject(subject);
-            message.setText(body);
-            mailSender.send(message);
-        } catch (Exception e) {
-            System.out.println("Error al enviar correo: " + e.getMessage());
-        }
-    }
+    @Value("${resend.from.email}")
+    private String fromEmail;
 
-    //  NUEVO MÉTODO PARA ENVIAR CORREOS CON DISEÑO HTML PROFESIONAL
+    private final RestTemplate restTemplate = new RestTemplate();
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    private static final String RESEND_URL = "https://api.resend.com/emails";
+
     public void enviarNotificacionHtml(String to, String subject, String htmlBody) {
-        try {
-            MimeMessage message = mailSender.createMimeMessage();
-            // true indica que soporta contenido multipart (necesario para HTML)
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-
-            helper.setFrom("alextejada025@gmail.com");
-            helper.setTo(to);
-            helper.setSubject(subject);
-            helper.setText(htmlBody, true); // El 'true' activa el formato HTML
-
-            mailSender.send(message);
-        } catch (Exception e) {
-            System.out.println("Error al enviar correo HTML: " + e.getMessage());
-        }
+        enviarCorreo(to, subject, htmlBody, null);
     }
 
+    public void enviarFacturaConAdjuntos(String to, String subject, String htmlBody,
+                                         byte[] pdfBytes, String jsonContent, String idPedido) {
+        // Preparar adjuntos
+        List<Map<String, String>> attachments = new ArrayList<>();
+        attachments.add(Map.of(
+                "filename", "DTE_Factura_" + idPedido + ".pdf",
+                "content", Base64.getEncoder().encodeToString(pdfBytes)
+        ));
+        attachments.add(Map.of(
+                "filename", "DTE_" + idPedido + ".json",
+                "content", Base64.getEncoder().encodeToString(jsonContent.getBytes())
+        ));
+        enviarCorreo(to, subject, htmlBody, attachments);
+    }
 
-    public void enviarFacturaConAdjuntos(String to, String subject, String htmlBody, byte[] pdfBytes, String jsonContent, String idPedido) {
+    private void enviarCorreo(String to, String subject, String htmlBody, List<Map<String, String>> attachments) {
         try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("Authorization", "Bearer " + apiKey);
 
-            helper.setFrom("alextejada025@gmail.com");
-            helper.setTo(to);
-            helper.setSubject(subject);
-            helper.setText(htmlBody, true);
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("from", fromEmail);
+            payload.put("to", to);
+            payload.put("subject", subject);
+            payload.put("html", htmlBody);
 
-            // 1. Adjuntar el PDF
-            helper.addAttachment("DTE_Factura_" + idPedido + ".pdf", new ByteArrayResource(pdfBytes));
+            if (attachments != null && !attachments.isEmpty()) {
+                payload.put("attachments", attachments);
+            }
 
-            // 2. Adjuntar el JSON (Documento Tributario original)
-            helper.addAttachment("DTE_" + idPedido + ".json", new ByteArrayResource(jsonContent.getBytes("UTF-8")));
+            String jsonPayload = objectMapper.writeValueAsString(payload);
+            HttpEntity<String> request = new HttpEntity<>(jsonPayload, headers);
 
-            mailSender.send(message);
+            ResponseEntity<String> response = restTemplate.postForEntity(RESEND_URL, request, String.class);
+
+            if (response.getStatusCode().is2xxSuccessful()) {
+                System.out.println("✅ Correo enviado con Resend (HTTP). Respuesta: " + response.getBody());
+            } else {
+                System.err.println("❌ Error al enviar correo (HTTP): " + response.getStatusCode() + " - " + response.getBody());
+            }
         } catch (Exception e) {
-            System.out.println("Error al enviar correo con adjuntos: " + e.getMessage());
+            System.err.println("❌ Excepción al enviar correo: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 }

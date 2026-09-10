@@ -136,7 +136,7 @@ public class ListaEscolarImpl implements IListaEscolar {
                 "¡Tu lista escolar #" + lista.getIdLista() + " ya está armada y lista para retirar!\n" +
                 "Puedes pasar a nuestra tienda en El Tunco, La Libertad, a recogerla.\n\n" +
                 "¡Te esperamos!";
-        emailService.enviarNotificacion(lista.getUsuario().getEmail(), "📚 Tu lista escolar está lista", mensaje);
+        emailService.enviarNotificacionHtml(lista.getUsuario().getEmail(), "📚 Tu lista escolar está lista", mensaje.replace("\n", "<br>"));
 
         return mapToResponse(lista);
     }

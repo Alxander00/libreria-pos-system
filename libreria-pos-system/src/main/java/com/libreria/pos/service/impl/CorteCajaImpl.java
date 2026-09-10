@@ -41,39 +41,18 @@ public class CorteCajaImpl implements ICorteCaja {
             fechaInicio = ultimoCorte.get().getFechaCierre();
         }
 
-        // 2. Obtener todos los pedidos y filtrar manualmente (sin lambdas problemáticas)
-        List<PedidoEntity> todos = pedidoRepository.findAll();
+        // 2. Obtener totales por método de pago (una sola consulta)
+        List<Object[]> resultados = pedidoRepository.sumarVentasPorMetodoPago(fechaInicio);
         double efectivo = 0, tarjeta = 0, transferencia = 0;
 
-        for (PedidoEntity p : todos) {
-            // Saltar si estado no es ENTREGADO o PAGADO
-            if (p.getEstado() == null) continue;
-            String estado = p.getEstado().name();
-            if (!estado.equals("ENTREGADO") && !estado.equals("PAGADO")) continue;
-
-            // Saltar si fecha es anterior al inicio
-            if (p.getFecha() == null) continue;
-            if (p.getFecha().isBefore(fechaInicio)) continue;
-
-            // Saltar si no tiene método de pago
-            if (p.getMetodoPago() == null || p.getMetodoPago().isEmpty()) continue;
-
-            // Sumar según método
-            String metodo = p.getMetodoPago().toUpperCase();
-            if (p.getTotal() == null) continue; // Seguridad
-            switch (metodo) {
-                case "EFECTIVO":
-                    efectivo += p.getTotal();
-                    break;
-                case "TARJETA":
-                    tarjeta += p.getTotal();
-                    break;
-                case "TRANSFERENCIA":
-                    transferencia += p.getTotal();
-                    break;
-                default:
-                    // Ignorar otros métodos
-                    break;
+        for (Object[] fila : resultados) {
+            String metodo = (String) fila[0];
+            Double total = (Double) fila[1];
+            if (metodo == null) continue;
+            switch (metodo.toUpperCase()) {
+                case "EFECTIVO": efectivo = total; break;
+                case "TARJETA": tarjeta = total; break;
+                case "TRANSFERENCIA": transferencia = total; break;
             }
         }
 

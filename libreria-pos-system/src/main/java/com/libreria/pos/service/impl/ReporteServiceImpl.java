@@ -23,14 +23,11 @@ public class ReporteServiceImpl implements IReporteService {
     public ByteArrayInputStream generarExcelVentas(LocalDateTime desde, LocalDateTime hasta) {
         List<PedidoEntity> pedidos;
         if (desde != null && hasta != null) {
-            pedidos = pedidoRepository.findAll().stream()
-                    .filter(p -> p.getFecha().isAfter(desde) && p.getFecha().isBefore(hasta))
-                    .filter(p -> p.getEstado().name().equals("ENTREGADO") || p.getEstado().name().equals("PAGADO"))
-                    .toList();
+            pedidos = pedidoRepository.findVentasEntreFechas(desde, hasta);
         } else {
-            pedidos = pedidoRepository.findAll().stream()
-                    .filter(p -> p.getEstado().name().equals("ENTREGADO") || p.getEstado().name().equals("PAGADO"))
-                    .toList();
+            // Si no hay fechas, tomar los últimos 30 días o todo
+            LocalDateTime inicio = LocalDateTime.now().minusDays(30);
+            pedidos = pedidoRepository.findVentasEntreFechas(inicio, LocalDateTime.now());
         }
 
         try (Workbook workbook = new XSSFWorkbook()) {

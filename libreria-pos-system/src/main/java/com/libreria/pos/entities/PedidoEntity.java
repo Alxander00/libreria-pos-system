@@ -55,6 +55,10 @@ public class PedidoEntity {
     @Column(name = "oculto_admin")
     private Boolean ocultoAdmin = false;
 
+    @Column(name = "es_apartado", columnDefinition = "TINYINT(1) DEFAULT 0")
+    private Boolean esApartado = false;
+
+
     // --- DATOS FISCALES DEL MINISTERIO DE HACIENDA ---
     @Column(name = "codigo_generacion", unique = true)
     private String codigoGeneracion; // El UUID de la factura

@@ -40,7 +40,6 @@ public class UsuarioEntity {
     }
 
     @Enumerated(EnumType.STRING)
-    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
     private Rol rol;
 
     public enum Rol {

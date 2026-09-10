@@ -35,7 +35,9 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/usuario/register", "/usuario/login", "/usuario/recuperar-password", "/error",
                                 "/producto/imagen/**", "/uploads/**", "/imagenes/**",
-                                "/producto/**", "/categoria/**"
+                                "/producto/**", "/categoria/**",
+                                "/api/webhooks/**",           // ← Para webhooks de Wompi
+                                "/api/pagos/wompi/**"         // ← Endpoints de Wompi
                         ).permitAll()
 
                 // 2. RUTAS EXCLUSIVAS DE ADMIN

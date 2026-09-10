@@ -1,6 +1,7 @@
 package com.libreria.pos.service;
 
 import com.libreria.pos.dto.LoginRequest;
+import com.libreria.pos.dto.TokenResponse;
 import com.libreria.pos.dto.UsuarioRequest;
 import com.libreria.pos.dto.UsuarioResponse;
 import com.libreria.pos.entities.UsuarioEntity;
@@ -13,7 +14,7 @@ import java.util.List;
 public interface IUsuario {
 
     UsuarioEntity save(UsuarioEntity usuario);
-    String login(LoginRequest login);
+    TokenResponse login(LoginRequest login); // Cambiado
     List<UsuarioEntity> findAll();
     Page<UsuarioEntity> findAll(Pageable pageable);
     Page<UsuarioEntity> searchClientes(String nombre, Pageable pageable);

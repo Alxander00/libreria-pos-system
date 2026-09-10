@@ -32,7 +32,7 @@ public class ApartadoEntity {
     @JoinColumn(name = "id_variacion")
     private ProductoVariacionEntity variacion;
 
-    private Long cantidad = 1L; // Generalmente 1, pero flexible
+    private Long cantidad = 1L;
 
     private Double totalAcordado;
 
@@ -42,13 +42,18 @@ public class ApartadoEntity {
 
     private LocalDateTime fechaCreacion;
 
-    private LocalDateTime fechaLimite; // Fecha tope para pagar (opcional)
+    private LocalDateTime fechaLimite;
 
     @Enumerated(EnumType.STRING)
     private EstadoApartado estado;
 
     @OneToMany(mappedBy = "apartado", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<ApartadoPagoEntity> pagos = new ArrayList<>();
+
+    // Relación con el pedido generado al momento de apartar
+    @OneToOne
+    @JoinColumn(name = "id_pedido")
+    private PedidoEntity pedido;
 
     // Helper para agregar pago
     public void agregarPago(ApartadoPagoEntity pago) {
