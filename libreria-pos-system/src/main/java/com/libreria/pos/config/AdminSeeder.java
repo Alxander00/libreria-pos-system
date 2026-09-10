@@ -1,3 +1,4 @@
+/*
 package com.libreria.pos.config;
 
 import com.libreria.pos.entities.UsuarioEntity;
@@ -44,4 +45,4 @@ public class AdminSeeder implements CommandLineRunner {
             System.err.println("⚠️ La app continuará arrancando. El admin se creará cuando la BD esté disponible.");
         }
     }
-}
+}*/
