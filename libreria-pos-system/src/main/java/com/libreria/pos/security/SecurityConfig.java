@@ -38,6 +38,7 @@ public class SecurityConfig {
 
                 // RUTAS PÚBLICAS (Sin login)
                 .requestMatchers(
+                        "/",
                         "/usuario/register", "/usuario/login", "/usuario/recuperar-password", "/error",
                         "/producto/imagen/**", "/uploads/**", "/imagenes/**",
                         "/producto/**", "/categoria/**",
